@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>五子棋 · Three.js · 不会输的 AI</title>
+<style>
+  :root {
+    --panel: rgba(18, 24, 38, 0.72);
+    --line: rgba(255, 255, 255, 0.12);
+    --accent: #5ac8fa;
+    --accent2: #ffd166;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: #070a12;
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+    color: #eaf0ff; -webkit-tap-highlight-color: transparent;
+  }
+  #app { display: block; width: 100%; height: 100%; }
+
+  #hud {
+    position: fixed; top: 18px; left: 18px; width: 268px;
+    padding: 16px 16px 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    box-shadow: 0 18px 45px rgba(0, 0, 0, 0.45);
+    user-select: none;
+    z-index: 10;
+  }
+  #hud h1 {
+    margin: 0 0 4px; font-size: 16px; font-weight: 700; letter-spacing: .5px;
+  }
+  #hud h1 span { color: var(--accent); }
+  #sub { font-size: 11px; color: #8d9bb8; margin-bottom: 12px; }
+
+  #aiInfo {
+    font-size: 11px; color: #7fd4ff; margin: -6px 0 12px;
+    letter-spacing: .3px; font-variant-numeric: tabular-nums;
+    min-height: 15px;
+  }
+
+  #status {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13.5px; font-weight: 600; line-height: 1.4;
+    padding: 10px 12px; margin-bottom: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--line); border-radius: 10px;
+    min-height: 42px;
+  }
+  #dot {
+    width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto;
+    background: #1b1b1f; border: 1px solid #555; box-shadow: 0 0 8px rgba(0,0,0,.6);
+  }
+  #dot.white { background: #f5f4ee; border-color: #cfcfc7; }
+  #dot.think { background: var(--accent); border-color: var(--accent); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
+
+  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button {
+    font: inherit; font-size: 13px; font-weight: 600; color: #eaf0ff;
+    padding: 9px 10px; border-radius: 10px; cursor: pointer;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid var(--line);
+    transition: background .15s, transform .08s, border-color .15s;
+  }
+  button:hover { background: rgba(90, 200, 250, 0.18); border-color: rgba(90,200,250,.5); }
+  button:active { transform: scale(0.97); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.wide { grid-column: span 2; }
+
+  .tip {
+    margin: 12px 0 0; font-size: 11px; color: #7d8aa6; line-height: 1.65;
+  }
+  .tip b { color: #a9b8d6; font-weight: 600; }
+
+  #toast {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.9);
+    padding: 18px 34px; border-radius: 18px; font-size: 22px; font-weight: 800;
+    letter-spacing: 2px; pointer-events: none; opacity: 0;
+    background: rgba(10, 14, 24, .82); border: 1px solid rgba(255,255,255,.18);
+    box-shadow: 0 20px 60px rgba(0,0,0,.6);
+    transition: opacity .35s, transform .35s;
+    z-index: 20; white-space: nowrap;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  #toast.win { color: var(--accent2); text-shadow: 0 0 24px rgba(255,209,102,.6); }
+  #toast.lose { color: #ff8080; text-shadow: 0 0 24px rgba(255,80,80,.55); }
+
+  @media (max-width: 560px) {
+    #hud { width: calc(100% - 24px); left: 12px; top: 12px; padding: 12px; }
+    #toast { font-size: 17px; padding: 14px 22px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="app"></canvas>
+
+<div id="hud">
+  <h1>五子棋 <span>· Three.js</span></h1>
+  <div id="sub">AI：α-β 迭代加深 + 棋型威胁搜索</div>
+  <div id="status"><i id="dot"></i><span id="statusText">你执黑先行</span></div>
+  <div id="aiInfo">—</div>
+  <div class="btns">
+    <button id="btnRestart">重新开始</button>
+    <button id="btnUndo">撤销一步</button>
+    <button id="btnSwap" class="wide">让 AI 先手（你执白）</button>
+  </div>
+  <p class="tip">
+    <b>左键</b> 落子 · <b>拖动</b> 旋转视角 · <b>滚轮</b> 缩放<br />
+    AI 每步思考约 1 秒，能看穿活三 / 冲四等强制杀招。
+  </p>
+</div>
+
+<div id="toast"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./lib/three.module.js",
+    "three/addons/controls/OrbitControls.js": "./lib/controls/OrbitControls.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Engine, N, BLACK, WHITE, other, fiveAt, fiveLine } from './engine.js';
+
+/* ============================ 基本常量 ============================ */
+const HALF = (N - 1) / 2;      // 7，棋盘中心到边缘的格数
+const BOARD = 15.6;            // 棋盘物理边长（世界单位）
+const STONE_R = 0.42;          // 棋子半径
+const STONE_H = 0.21;          // 棋子半高（压扁后）
+
+/* ============================ 渲染器 / 场景 ============================ */
+const canvas = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+scene.background = makeBackgroundTexture();
+scene.fog = new THREE.Fog(0x0a0f1c, 42, 78);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(0, 15.5, 13.5);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.enablePan = false;
+controls.minDistance = 9;
+controls.maxDistance = 34;
+controls.minPolarAngle = 0.12;
+controls.maxPolarAngle = 1.36;
+controls.rotateSpeed = 0.55;
+controls.zoomSpeed = 0.8;
+controls.update();
+
+/* ------------------------------ 背景渐变 ------------------------------ */
+function makeBackgroundTexture() {
+  const c = document.createElement('canvas');
+  c.width = 32; c.height = 512;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 512);
+  grad.addColorStop(0, '#16203a');
+  grad.addColorStop(0.45, '#0d1424');
+  grad.addColorStop(1, '#05070d');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 32, 512);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/* -------------------------------- 灯光 -------------------------------- */
+scene.add(new THREE.HemisphereLight(0xbcd6ff, 0x2b2115, 0.65));
+
+const keyLight = new THREE.DirectionalLight(0xfff0d8, 2.1);
+keyLight.position.set(9, 19, 8);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.left = -12;
+keyLight.shadow.camera.right = 12;
+keyLight.shadow.camera.top = 12;
+keyLight.shadow.camera.bottom = -12;
+keyLight.shadow.camera.near = 1;
+keyLight.shadow.camera.far = 55;
+keyLight.shadow.bias = -0.0006;
+keyLight.shadow.radius = 2.5;
+scene.add(keyLight);
+
+const fillLight = new THREE.DirectionalLight(0x86a8ff, 0.45);
+fillLight.position.set(-11, 9, -9);
+scene.add(fillLight);
+
+/* ================================ 棋盘 ================================ */
+const boardGroup = new THREE.Group();
+scene.add(boardGroup);
+
+// 棋盘主体（侧面木质）
+const boardBody = new THREE.Mesh(
+  new THREE.BoxGeometry(BOARD, 0.7, BOARD),
+  new THREE.MeshStandardMaterial({ color: 0x9c6a38, roughness: 0.75, metalness: 0.02 })
+);
+boardBody.position.y = -0.35;
+boardBody.receiveShadow = true;
+boardBody.castShadow = true;
+boardGroup.add(boardBody);
+
+// 棋盘表面（画布纹理：木纹 + 网格 + 星位）
+const boardTop = new THREE.Mesh(
+  new THREE.PlaneGeometry(BOARD, BOARD),
+  new THREE.MeshStandardMaterial({ map: makeBoardTexture(), roughness: 0.62, metalness: 0.0 })
+);
+boardTop.rotation.x = -Math.PI / 2;
+boardTop.position.y = 0.002;
+boardTop.receiveShadow = true;
+boardGroup.add(boardTop);
+
+/** 生成棋盘纹理（2048²，世界坐标 -7.8~7.8 映射到 0~2048） */
+function makeBoardTexture() {
+  const S = 2048;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const g = cv.getContext('2d');
+
+  // 1. 底色
+  const base = g.createLinearGradient(0, 0, S, S);
+  base.addColorStop(0, '#ecca96');
+  base.addColorStop(0.45, '#e0b97e');
+  base.addColorStop(1, '#cfa469');
+  g.fillStyle = base;
+  g.fillRect(0, 0, S, S);
+
+  // 2. 木纹
+  for (let i = 0; i < 260; i++) {
+    const y0 = Math.random() * S;
+    g.beginPath();
+    g.moveTo(-20, y0);
+    g.bezierCurveTo(
+      S * 0.3, y0 + (Math.random() - 0.5) * 90,
+      S * 0.7, y0 + (Math.random() - 0.5) * 90,
+      S + 20, y0 + (Math.random() - 0.5) * 50
+    );
+    g.strokeStyle = `rgba(126,84,40,${0.015 + Math.random() * 0.05})`;
+    g.lineWidth = 1 + Math.random() * 4;
+    g.stroke();
+  }
+  // 轻微暗角
+  const vig = g.createRadialGradient(S / 2, S / 2, S * 0.25, S / 2, S / 2, S * 0.78);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(80,50,20,0.16)');
+  g.fillStyle = vig;
+  g.fillRect(0, 0, S, S);
+
+  // 3. 网格：格点 i（0..14）对应世界坐标 (i-7)，换算到像素
+  const px = (i) => ((i + (BOARD / 2 - HALF)) / BOARD) * S;
+
+  g.lineCap = 'round';
+  g.strokeStyle = 'rgba(74,44,17,0.88)';
+  g.lineWidth = S * 0.0016;
+  for (let i = 0; i < N; i++) {
+    const p = px(i);
+    g.beginPath(); g.moveTo(px(0), p); g.lineTo(px(14), p); g.stroke();
+    g.beginPath(); g.moveTo(p, px(0)); g.lineTo(p, px(14)); g.stroke();
+  }
+  // 外框加粗
+  g.lineWidth = S * 0.0042;
+  g.strokeRect(px(0), px(0), px(14) - px(0), px(14) - px(0));
+
+  // 4. 星位
+  g.fillStyle = 'rgba(58,33,10,0.92)';
+  for (const [sx, sy] of [[3, 3], [11, 3], [3, 11], [11, 11], [7, 7]]) {
+    g.beginPath();
+    g.arc(px(sx), px(sy), S * 0.0062, 0, Math.PI * 2);
+    g.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return tex;
+}
+
+/* ================================ 棋子 ================================ */
+const stoneGeo = new THREE.SphereGeometry(STONE_R, 48, 32);
+const matBlack = new THREE.MeshPhysicalMaterial({
+  color: 0x0c0c11, roughness: 0.16, metalness: 0.18,
+  clearcoat: 1, clearcoatRoughness: 0.06, reflectivity: 0.7
+});
+const matWhite = new THREE.MeshPhysicalMaterial({
+  color: 0xf8f7f1, roughness: 0.2, metalness: 0.02,
+  clearcoat: 1, clearcoatRoughness: 0.12, reflectivity: 0.5
+});
+
+const stoneGroup = new THREE.Group();
+scene.add(stoneGroup);
+
+const meshAt = new Array(N * N).fill(null); // 索引 -> 棋子 mesh
+
+function worldX(gx) { return (gx - HALF) * 1; }
+function worldZ(gy) { return (gy - HALF) * 1; }
+
+function addStoneMesh(gx, gy, role) {
+  const mesh = new THREE.Mesh(stoneGeo, role === BLACK ? matBlack : matWhite);
+  mesh.scale.set(1, 0.5, 1);
+  mesh.position.set(worldX(gx), STONE_H, worldZ(gy));
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.userData.baseY = STONE_H;
+  stoneGroup.add(mesh);
+  meshAt[gx * N + gy] = mesh;
+  // 落子动画：从空中掉下来
+  anims.push({ mesh, from: STONE_H + 7, to: STONE_H, t: 0, dur: 0.34 });
+  return mesh;
+}
+
+function removeStoneMesh(gx, gy) {
+  const i = gx * N + gy;
+  const mesh = meshAt[i];
+  if (!mesh) return;
+  stoneGroup.remove(mesh);
+  meshAt[i] = null;
+}
+
+function clearStones() {
+  for (let i = stoneGroup.children.length - 1; i >= 0; i--) stoneGroup.remove(stoneGroup.children[i]);
+  meshAt.fill(null);
+  anims.length = 0;
+}
+
+/* --------------------------- 最近一步的标记 --------------------------- */
+const lastMarker = new THREE.Mesh(
+  new THREE.TorusGeometry(0.5, 0.028, 12, 48),
+  new THREE.MeshBasicMaterial({ color: 0xff4d4d })
+);
+lastMarker.rotation.x = -Math.PI / 2;
+lastMarker.position.y = 0.012;
+lastMarker.visible = false;
+scene.add(lastMarker);
+
+/* ------------------------------ 落子预览 ------------------------------ */
+const ghost = new THREE.Mesh(
+  stoneGeo,
+  new THREE.MeshBasicMaterial({ color: 0x2b2b33, transparent: true, opacity: 0.32, depthWrite: false })
+);
+ghost.scale.set(1, 0.5, 1);
+ghost.visible = false;
+scene.add(ghost);
+
+/* ------------------------------ 胜利连线 ------------------------------ */
+let winBeam = null;
+const winHighlight = []; // 胜利棋子高亮（保留原材质以便还原）
+
+function showWinBeam(cells) {
+  const a = cells[0];
+  const b = cells[cells.length - 1];
+  const p1 = new THREE.Vector3(worldX(a.x), 0.5, worldZ(a.y));
+  const p2 = new THREE.Vector3(worldX(b.x), 0.5, worldZ(b.y));
+  const dir = new THREE.Vector3().subVectors(p2, p1);
+  const len = dir.length();
+  const geo = new THREE.CylinderGeometry(0.055, 0.055, len, 12);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.85 });
+  winBeam = new THREE.Mesh(geo, mat);
+  winBeam.position.copy(p1).add(p2).multiplyScalar(0.5);
+  winBeam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  scene.add(winBeam);
+}
+function clearWinBeam() {
+  if (winBeam) { scene.remove(winBeam); winBeam.geometry.dispose(); winBeam.material.dispose(); winBeam = null; }
+  for (const it of winHighlight) it.mesh.material = it.original;
+  winHighlight.length = 0;
+}
+
+/* ================================ 游戏 ================================ */
+const engine = new Engine();
+let humanColor = BLACK;
+let aiColor = WHITE;
+let turn = BLACK;
+let history = [];
+let gameOver = false;
+let thinking = false;
+const anims = [];
+
+const $status = document.getElementById('statusText');
+const $dot = document.getElementById('dot');
+const $aiInfo = document.getElementById('aiInfo');
+const $toast = document.getElementById('toast');
+const $restart = document.getElementById('btnRestart');
+const $undo = document.getElementById('btnUndo');
+const $swap = document.getElementById('btnSwap');
+
+function updateStatus() {
+  $dot.className = '';
+  if (gameOver) {
+    $dot.className = 'think';
+    return;
+  }
+  if (thinking) {
+    $status.textContent = 'AI 正在思考…';
+    $dot.className = 'think';
+    return;
+  }
+  if (turn === humanColor) {
+    $status.textContent = `轮到你落子（${humanColor === BLACK ? '黑棋' : '白棋'}）`;
+    $dot.className = humanColor === WHITE ? 'white' : '';
+  } else {
+    $status.textContent = 'AI 回合';
+    $dot.className = aiColor === WHITE ? 'white' : '';
+  }
+  ghost.material.color.setHex(humanColor === BLACK ? 0x2b2b33 : 0xf0efe8);
+}
+
+function toast(msg, cls) {
+  $toast.textContent = msg;
+  $toast.className = 'show ' + (cls || '');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { $toast.className = ''; }, 2600);
+}
+
+function restart(aiFirst = false) {
+  engine.reset();
+  clearStones();
+  clearWinBeam();
+  history = [];
+  gameOver = false;
+  thinking = false;
+  humanColor = aiFirst ? WHITE : BLACK;
+  aiColor = other(humanColor);
+  turn = BLACK;
+  lastMarker.visible = false;
+  ghost.visible = false;
+  $aiInfo.textContent = '—';
+  $toast.className = '';
+  updateStatus();
+  if (turn === aiColor) scheduleAI();
+}
+
+/** 落子（玩家与 AI 共用） */
+function doMove(x, y, role) {
+  engine.place(x, y, role);
+  addStoneMesh(x, y, role);
+  history.push({ x, y, role });
+
+  lastMarker.position.set(worldX(x), 0.012, worldZ(y));
+  lastMarker.visible = true;
+
+  const line = fiveLine(engine.bd, x, y, role);
+  if (line) {
+    showWinBeam(line);
+    finish(line, role);
+    return;
+  }
+  if (history.length === N * N) {
+    finish(null, 0);
+    return;
+  }
+  turn = other(role);
+  updateStatus();
+}
+
+function finish(line, winner) {
+  gameOver = true;
+  thinking = false;
+  if (line) {
+    line.forEach((c) => {
+      const m = meshAt[c.x * N + c.y];
+      if (m && m.material.emissive) {
+        const original = m.material;
+        const hi = original.clone();
+        hi.emissive.setHex(0x6a5000);
+        hi.emissiveIntensity = 0.95;
+        m.material = hi;
+        winHighlight.push({ mesh: m, original });
+      }
+    });
+  }
+  if (winner === 0) {
+    $status.textContent = '平局！棋盘已满';
+    $dot.className = '';
+    toast('平 局', '');
+  } else if (winner === humanColor) {
+    $status.textContent = '你赢了！';
+    $dot.className = 'think';
+    toast('你 赢 了！', 'win');
+  } else {
+    $status.textContent = 'AI 获胜';
+    $dot.className = 'think';
+    toast('AI 获 胜', 'lose');
+  }
+  updateStatus();
+}
+
+function aiTurn() {
+  thinking = true;
+  updateStatus();
+  // 让浏览器先渲染出“思考中”，再做同步搜索
+  setTimeout(() => {
+    const t0 = performance.now();
+    const mv = engine.think(aiColor);
+    const cost = performance.now() - t0;
+    thinking = false;
+    if (gameOver || !mv) { updateStatus(); return; }
+    doMove(mv.x, mv.y, aiColor);
+    if (!gameOver) {
+      $aiInfo.textContent = `AI 落子 (${mv.x}, ${mv.y}) · 搜索 ${engine.lastDepth} 层 · ${engine.nodes.toLocaleString()} 节点 · ${cost.toFixed(0)} ms`;
+      console.log(`[AI] 落子 (${mv.x},${mv.y})  深度 ${engine.lastDepth}  用时 ${cost.toFixed(0)}ms  节点 ${engine.nodes}`);
+    }
+  }, 50);
+}
+
+function scheduleAI() {
+  if (gameOver) return;
+  aiTurn();
+}
+
+/* ------------------------------- 撤销 ------------------------------- */
+function undo() {
+  if (thinking || history.length === 0) return;
+  if (gameOver) {
+    gameOver = false;
+    clearWinBeam();
+    $toast.className = '';
+  }
+  while (history.length > 0) {
+    const m = history.pop();
+    engine.remove(m.x, m.y);
+    removeStoneMesh(m.x, m.y);
+    turn = m.role; // 撤销后轮到刚下这步的人
+    if (turn === humanColor) break;
+  }
+  if (history.length > 0) {
+    const last = history[history.length - 1];
+    lastMarker.position.set(worldX(last.x), 0.012, worldZ(last.y));
+    lastMarker.visible = true;
+  } else {
+    lastMarker.visible = false;
+  }
+  if (turn === aiColor) scheduleAI();
+  else updateStatus();
+}
+
+/* ============================== 交互拾取 ============================== */
+const raycaster = new THREE.Raycaster();
+const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const ndc = new THREE.Vector2();
+const hitPoint = new THREE.Vector3();
+
+function pickGrid(clientX, clientY) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  if (!raycaster.ray.intersectPlane(plane, hitPoint)) return null;
+  if (Math.abs(hitPoint.x) > BOARD / 2 || Math.abs(hitPoint.z) > BOARD / 2) return null;
+  const gx = Math.round(hitPoint.x + HALF);
+  const gy = Math.round(hitPoint.z + HALF);
+  if (gx < 0 || gx >= N || gy < 0 || gy >= N) return null;
+  return { x: gx, y: gy };
+}
+
+function canPlay() {
+  return !gameOver && !thinking && turn === humanColor;
+}
+
+let downPos = null;
+let downTime = 0;
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  downPos = { x: e.clientX, y: e.clientY };
+  downTime = performance.now();
+});
+
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (e.button !== 0 || !downPos) return;
+  const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
+  const elapsed = performance.now() - downTime;
+  downPos = null;
+  if (moved > 6 || elapsed > 500) return; // 判定为拖动旋转视角
+  if (!canPlay()) return;
+  const g = pickGrid(e.clientX, e.clientY);
+  if (!g) return;
+  if (engine.bd[g.x * N + g.y] !== 0) return;
+  ghost.visible = false;
+  doMove(g.x, g.y, humanColor);
+  if (!gameOver) scheduleAI();
+});
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (!canPlay()) { ghost.visible = false; return; }
+  const g = pickGrid(e.clientX, e.clientY);
+  if (!g || engine.bd[g.x * N + g.y] !== 0) { ghost.visible = false; return; }
+  ghost.visible = true;
+  ghost.position.set(worldX(g.x), STONE_H, worldZ(g.y));
+});
+
+renderer.domElement.addEventListener('pointerleave', () => { ghost.visible = false; });
+
+/* ================================ 按钮 ================================ */
+$restart.addEventListener('click', () => restart(humanColor === WHITE));
+$undo.addEventListener('click', undo);
+$swap.addEventListener('click', () => restart(humanColor === BLACK));
+
+/* ================================ 主循环 ================================ */
+const clock = new THREE.Clock();
+
+function updateAnims(dt) {
+  for (let i = anims.length - 1; i >= 0; i--) {
+    const a = anims[i];
+    a.t += dt;
+    const k = Math.min(a.t / a.dur, 1);
+    const e = 1 - Math.pow(1 - k, 3); // easeOutCubic
+    a.mesh.position.y = a.from + (a.to - a.from) * e;
+    // 落地压扁再弹回
+    const squash = k < 0.82 ? 1 : 1 + Math.sin((k - 0.82) / 0.18 * Math.PI) * 0.06;
+    a.mesh.scale.set(squash, 0.5 / squash, squash);
+    if (k >= 1) {
+      a.mesh.position.y = a.to;
+      a.mesh.scale.set(1, 0.5, 1);
+      anims.splice(i, 1);
+    }
+  }
+  if (lastMarker.visible) {
+    const s = 1 + Math.sin(performance.now() * 0.004) * 0.06;
+    lastMarker.scale.set(s, s, s);
+  }
+  if (winBeam) {
+    winBeam.material.opacity = 0.55 + Math.sin(performance.now() * 0.006) * 0.3;
+  }
+}
+
+function animate() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  updateAnims(dt);
+  controls.update();
+  renderer.render(scene, camera);
+}
+renderer.setAnimationLoop(animate);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ================================ 启动 ================================ */
+restart(false);
+console.log('%c五子棋 AI 已就绪', 'color:#5ac8fa;font-weight:bold');
+</script>
+</body>
+</html>
