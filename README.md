@@ -2,7 +2,12 @@
 
 一个可以直接在浏览器里玩的 3D 五子棋：Three.js 负责画面，纯手写的 α-β 搜索引擎负责下棋。
 
-## 运行
+## 在线试玩
+
+https://shianliu.github.io/Gomoku-ai-player/
+（需在仓库 Settings → Pages 里把 Source 设为 `main` / `/ (root)`，仓库已带 `.nojekyll`）
+
+## 本地运行
 
 ```bash
 node server.js          # 然后浏览器打开 http://localhost:5174
